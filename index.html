@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ligma Weather Plus</title>
+<style>
+body {background:#00ff1a;color:#fff;font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;margin:0;min-height:100vh;display:flex;justify-content:center;align-items:center;transition:background 0.5s;}
+body.night {background:#0b1d2b;}
+#weather-container {width:420px;max-width:95vw;padding:20px;border-radius:15px;background:rgba(7,87,226,0.37);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.1);text-align:center;box-sizing:border-box;}
+input, select, button {width:calc(100% - 16px);padding:8px;margin-top:10px;border-radius:10px;border:1px solid #fff;}
+button {background:#debff4;color:#fff;cursor:pointer;transition:all 0.3s;}
+button:hover{background:#8b48d7;}
+#unit-buttons button{width:30%;margin:5px 2%;}
+#weather-icon{width:120px;height:120px;display:block;margin:0 auto;}
+#temp-div p{font-size:40px;margin-top:-10px;}
+#small-info span{margin:0 5px;font-size:14px;display:block;}
+#weekly-forecast, #hourly-forecast{display:flex;overflow-x:auto;margin-top:15px;}
+.day-item, .hour-item{flex:0 0 auto;width:80px;display:flex;flex-direction:column;align-items:center;margin-right:10px;}
+.day-item img, .hour-item img{width:40px;height:40px;margin-bottom:5px;}
+.temps{font-size:12px;margin-top:3px;}
+#map-view{margin-top:20px;display:none;}
+iframe{width:100%;height:400px;border:none;border-radius:10px;}
+#current-time p{margin:5px 0 0 0;font-size:18px;}
+#alerts{margin-top:10px;color:#ff5555;font-weight:bold;}
+.icon-row span{margin:0 6px;font-size:16px;display:inline-block;}
+.precip-bar{height:5px;background:#8b48d7;margin-top:2px;width:0%;border-radius:3px;}
+</style>
+</head>
+<body>
+<div id="weather-container">
+<h2>Ligma Weather Plus</h2>
+<input type="text" id="city" placeholder="Enter city"/>
+<button onclick="getWeather()">Search</button>
+<div id="unit-buttons">
+<button onclick="setUnit('metric')">°C</button>
+<button onclick="setUnit('imperial')">°F</button>
+<button onclick="setUnit('standard')">°K</button>
+</div>
+<select id="view-mode" onchange="changeView()">
+<option value="weather">5-Day Forecast</option>
+<option value="windy">Windy Map</option>
+<option value="radar">Radar View</option>
+<option value="satellite">Satellite View</option>
+</select>
+
+<div id="weather-section">
+<img id="weather-icon" width="120" height="120"/>
+<div id="temp-div"></div>
+<div class="icon-row" id="small-info"></div>
+<div id="weather-info"></div>
+<div id="current-time"></div>
+<div id="alerts"></div>
+<div id="hourly-forecast"></div>
+<div id="weekly-forecast"></div>
+</div>
+
+<div id="map-view">
+<iframe id="map-frame" loading="lazy"></iframe>
+</div>
+</div>
+
+<script>
+let timeInterval;
+let currentUnit='metric';
+
+function setUnit(unit){ currentUnit=unit; const city=document.getElementById('city').value.trim(); if(city) getWeather(); }
+
+async function getWeather(){
+    const apiKey='ZmUyYjU4YjllZmM5YTFmNDRjNzkzNzQ5MmJiZjI1YzI=';
+    const realKey=atob(apiKey);
+    const city=document.getElementById('city').value.trim();
+    if(!city) return alert('Enter a city.');
+    document.getElementById('view-mode').value='weather';
+    changeView();
+    try{
+        const res = await fetch(`https://api.openweathermap.org/data/2.5/forecast?q=${encodeURIComponent(city)}&units=${currentUnit}&appid=${realKey}`);
+        const data = await res.json();
+        if(data.cod!="200" && data.cod!=200){ alert("City not found"); return; }
+        const coords=data.city.coord;
+
+        const current = data.list[0];
+        const iconCode = current.weather[0].icon;
+        document.getElementById('weather-icon').src = `https://openweathermap.org/img/wn/${iconCode}@4x.png`;
+        document.getElementById('weather-icon').style.display = 'block';
+
+        document.getElementById('temp-div').innerHTML = `<p>${Math.round(current.main.temp)}°</p>`;
+        document.getElementById('weather-info').innerHTML = `<p>${city}</p><p>${current.weather[0].description}</p>`;
+
+        displayFiveDayForecast(data.list);
+        displayHourlyForecast(data.list);
+        updateMapOverlay(coords.lat, coords.lon);
+        startClock(data.city.timezone);
+        setNightMode(data.city.timezone);
+        fetchAdditionalData(coords.lat, coords.lon, realKey);
+    }catch(e){ console.error(e); alert("Failed to fetch weather"); }
+}
+
+function setNightMode(offsetSec){
+    const now=new Date(); const utc=now.getTime()+now.getTimezoneOffset()*60000;
+    const cityTime=new Date(utc+offsetSec*1000);
+    const hour=cityTime.getHours();
+    document.body.classList.toggle('night', hour>=19||hour<6);
+}
+
+async function fetchAdditionalData(lat,lon,apiKey){
+    try{
+        const res = await fetch(`https://api.openweathermap.org/data/2.5/onecall?lat=${lat}&lon=${lon}&exclude=minutely&units=${currentUnit}&appid=${apiKey}`);
+        const data = await res.json();
+
+        const smallInfo=document.getElementById('small-info');
+        const wind=`💨 ${data.current.wind_speed}${currentUnit==='imperial'?' mph':' m/s'}`;
+        const humidity=`💧 ${data.current.humidity}%`;
+        const pressure=`🌡 ${data.current.pressure} hPa`;
+        const feels=`🌡️ Feels: ${Math.round(data.current.feels_like)}°`;
+
+        smallInfo.innerHTML=`${feels} ${wind} ${humidity} ${pressure}`;
+    }catch(e){ console.error('Additional data fetch failed', e);}
+}
+
+function startClock(offsetSec=0){
+    clearInterval(timeInterval);
+    const timeDiv=document.getElementById('current-time');
+    function update(){
+        const now=new Date(); const utc=now.getTime()+now.getTimezoneOffset()*60000;
+        const cityTime=new Date(utc+offsetSec*1000);
+        let hours=cityTime.getHours(); const ampm=hours>=12?'PM':'AM';
+        hours=hours%12||12; const minutes=cityTime.getMinutes().toString().padStart(2,'0');
+        const seconds=cityTime.getSeconds().toString().padStart(2,'0');
+        timeDiv.innerHTML=`<p>${hours}:${minutes}:${seconds} ${ampm}</p>`;
+    }
+    update(); timeInterval=setInterval(update,1000);
+}
+
+function displayFiveDayForecast(list){
+    const weekDiv=document.getElementById('weekly-forecast'); weekDiv.innerHTML='';
+    const dailyMap={};
+    list.forEach(item=>{ const date=new Date(item.dt*1000).toDateString(); if(!dailyMap[date]) dailyMap[date]=[]; dailyMap[date].push(item); });
+    const dailyList=Object.values(dailyMap).slice(0,5);
+    dailyList.forEach(dayArr=>{
+        const dayData=dayArr[Math.floor(dayArr.length/2)];
+        const d=new Date(dayData.dt*1000);
+        const weekday=d.toLocaleDateString('en-US',{weekday:'short'});
+        const icon=dayData.weather[0].icon;
+        const temps=dayArr.map(x=>x.main.temp);
+        const tempAvg=Math.round(temps.reduce((s,t)=>s+t,0)/temps.length);
+        const tempMin=Math.round(Math.min(...temps));
+        const tempMax=Math.round(Math.max(...temps));
+        const iconUrl=`https://openweathermap.org/img/wn/${icon}.png`;
+        const el=document.createElement('div'); el.classList.add('day-item');
+        el.innerHTML=`<span>${weekday}</span><img src="${iconUrl}"><span>${tempAvg}°</span><span class="temps">H:${tempMax}° L:${tempMin}°</span>`;
+        weekDiv.appendChild(el);
+    });
+}
+
+function displayHourlyForecast(list){
+    const hourlyDiv=document.getElementById('hourly-forecast'); hourlyDiv.innerHTML='';
+    const now=new Date();
+    const next12=list.filter(l=>new Date(l.dt*1000)>now).slice(0,12);
+    next12.forEach(item=>{
+        const d=new Date(item.dt*1000);
+        const hour=d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',hour12:true});
+        const icon=item.weather[0].icon;
+        const temp=Math.round(item.main.temp);
+        const pop=Math.round((item.pop||0)*100);
+        const el=document.createElement('div'); el.classList.add('hour-item');
+        el.innerHTML=`<span>${hour}</span><img src="https://openweathermap.org/img/wn/${icon}.png"><span>${temp}°</span><div class="precip-bar" style="width:${pop}%"></div>`;
+        hourlyDiv.appendChild(el);
+    });
+}
+
+function changeView(){
+    const mode=document.getElementById('view-mode').value;
+    const weather=document.getElementById('weather-section');
+    const map=document.getElementById('map-view');
+    if(mode==='weather'){ weather.style.display='block'; map.style.display='none'; }
+    else{ weather.style.display='none'; map.style.display='block'; updateMapOverlay(); }
+}
+
+function updateMapOverlay(lat=-33.8688,lon=151.2093){
+    const mapFrame=document.getElementById('map-frame');
+    const mode=document.getElementById('view-mode').value;
+    let overlay='temp';
+    if(mode==='radar') overlay='radar';
+    if(mode==='satellite') overlay='satellite';
+    if(mode==='windy') overlay='wind';
+    mapFrame.src=`https://embed.windy.com/embed2.html?lat=${lat}&lon=${lon}&zoom=6&level=surface&overlay=${overlay}&menu=true`;
+}
+</script>
+</body>
+</html>
